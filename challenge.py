@@ -1,33 +1,42 @@
 from validator import Validator
-from sys import argv
+import sys
 import logging
-import logging.handlers
 from config import LOG_LEVEL
 
 
 def main():
-    logging.basicConfig(level=LOG_LEVEL, format="%(name)s:%(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=LOG_LEVEL,
+        format="%(name)s:%(levelname)s - %(message)s"
+    )
     logger = logging.getLogger("Challenge")
 
-    try:
-        validator = Validator(argv[1])
-        if validator.data is None:
-            logger.critical(f"Invalid file {argv[1]}")
-            exit()
-    except IndexError:
-        logger.info(f"usage: {argv[0]} <file>")
-        exit()
-    except:
-        logger.critical(f"unexpected error:", exc_info=True)
-        exit()
+    if len(sys.argv) < 2:
+        logger.info(f"Usage: {sys.argv[0]} <file>")
+        return
 
-    if (error := validator.validate()) is not None:
+    filename = sys.argv[1]
+
+    try:
+        validator = Validator(filename)
+    except Exception:
+        logger.critical("Unexpected error:", exc_info=True)
+        return
+
+    if validator.data is None:
+        logger.critical(f"Invalid file {filename}")
+        return
+
+    error = validator.validate()
+
+    if error is not None:
         logger.info(
-            f"discrepancy found in sensor readings at {error.time} seconds:"
-            f"\npotentiometer reports shaft position: {error.pot}°\nencoder reports shaft position: {error.encoder}°"
+            f"Discrepancy found at {error.time} seconds:"
+            f"\nPotentiometer position: {error.pot}°"
+            f"\nEncoder position: {error.encoder}°"
         )
     else:
-        logger.info(f"no discrepancy found in log {argv[1]}")
+        logger.info(f"No discrepancy found in log {filename}")
 
 
 if __name__ == "__main__":

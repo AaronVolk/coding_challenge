@@ -1,20 +1,16 @@
-import statistics
-
 import config
 from validator import Validator
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
 
 validator = Validator("./input/normal.txt")
 
-if validator.data is None: raise Exception("No data")  # if there is no data than the program stops running so warnings dont occur later
+if validator.data is None:
+    raise Exception("No data")  # if there is no data than the program stops running so warnings dont occur later
 max_zscore = 0
 worst_reading = None
 for reading in validator.data:
     if reading.time <= config.CALIBRATION_TIME: continue
 
-    disagreement = reading.pot - reading.encoder
+    disagreement = abs(reading.pot - reading.encoder)
     z_score = abs((disagreement - validator._mean) / validator._std_dev)
     if z_score > max_zscore:
         max_zscore = z_score

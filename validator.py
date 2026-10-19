@@ -25,21 +25,23 @@ class Reading:
         ARGUMENTS:
             a line of the input file
         """
-        line = line.split()
-        return cls(float(line[0]), int(line[1]), int(line[2]))
+        values = line.split()
+
+        time = float(values[0])
+        encoder = int(values[1])
+        pot = int(values[2])
+
+        return cls(time, encoder, pot)
 
     def __str__(self):
         return f"time = {self.time}s: encoder degrees: {self.encoder:.3f}, pot degrees: {self.pot:.3f}"
-
-    def __repr__(self):
-        return str(self)
 
 
 class Validator:
     data: list[Reading] | None  # list of all sensor readings from the file
     _calibration_time: int | float  # time when gearbox is reported to work properly
 
-    _noise_floor: float  # the smallest sensor difference that indicates a problem, based on potentiometer
+    _noise_floor: float  # the smallest position change the potentiometer can measure
     _threshold: int | float  # how unusual a reading can be before it is considered faulty
 
     _std_dev: float  # how much the sensors differ during calibration
@@ -49,7 +51,7 @@ class Validator:
 
     def __init__(self,
                  input_path: str,
-                 max_voltage: int = config.MAX_VOLTAGE,
+                 max_potent_counts: int = config.MAX_POTENT_COUNTS,
                  gear_ratio: int | float = config.GEAR_RATIO,
                  encoder_cycles: int | float = config.ENCODER_CYCLES_PER_REV,
                  threshold: int | float = config.THRESHOLD_Z_SCORE,
@@ -61,7 +63,7 @@ class Validator:
 
         ARGUMENTS:
             input_path: the path to the input file of potentiometer and encoder readings
-            max_voltage: potentiometer A/D reading from the shaft being at 360 degrees (defaults to config.MAX_VOLTAGE)
+            max_potent_counts: potentiometer A/D reading from the shaft being at 360 degrees (defaults to config.MAX_POTENT_COUNTS)
             gear ratio: gear ratio between the encoder and the shaft (defaults to config.GEAR_RATIO)
             encoder_cycles: The amount of counts for one full revolution of the encoder (defaults to config.ENCODER_CYCLES_PER_REV)
             threshold: The largest Z score a reading can have before being considered faulty (defaults to config.THRESHOLD_Z_SCORE)
@@ -69,7 +71,7 @@ class Validator:
         self._logger = logging.getLogger("Validator")
 
         # define the stuff given to us
-        self._noise_floor = 360 / max_voltage  # the smallest change in shaft position the pot can detect
+        self._noise_floor = 360 / max_potent_counts  # the smallest change in shaft position the pot can detect
         self._threshold = threshold
         self._calibration_time = calibration_time
 
@@ -77,7 +79,7 @@ class Validator:
         try:
             with open(input_path) as f:
                 raw_data = f.read().splitlines()
-            self.data = self._clean_data(raw_data, max_voltage, gear_ratio, encoder_cycles)
+            self.data = self._clean_data(raw_data, max_potent_counts, gear_ratio, encoder_cycles)
         except FileNotFoundError:
                 self._logger.error(f"file {input_path} not found. Cannot create object")
                 self.data = None
@@ -94,14 +96,14 @@ class Validator:
     def _z_score(self, x):
         return abs((x - self._mean) / max(self._std_dev, self._noise_floor))
 
-    def _clean_data(self, data: list[str], max_voltage, gear_ratio, encoder_cycles) -> list[Reading]:
+    def _clean_data(self, data: list[str], max_potent_counts, gear_ratio, encoder_cycles) -> list[Reading]:
         """
         takes the raw data of the input file and uses the functional relationships of the sensors readings to the shaft
         position and converts the readings to the position of the shaft.
 
         ARGUMENTS:
             data: data from the input file, split into a list of each line of readings
-            max_voltage: the voltage of the potentiometer when the shaft is at 360 degrees
+            max_potent_counts:  Maximum potentiometer reading for one full rotation
             gear ratio: gear ratio between the encoder and the shaft
             encoder_cycles: The amount of counts for one full revolution of the encoder
 
@@ -110,8 +112,11 @@ class Validator:
 
         """
         # small functions that convert sensor readings into degrees.
-        convert_pot = lambda voltage: voltage / (max_voltage / 360)
-        convert_encoder = lambda encoder: (360 / (gear_ratio * encoder_cycles)) * encoder
+        def convert_pot(voltage):
+            return voltage / (max_potent_counts / 360)
+
+        def convert_encoder(encoder):
+            return (360 / (gear_ratio * encoder_cycles)) * encoder
 
         # Turns the file's data into reading objects and converts their values into degrees.
         data = [Reading.from_input_file(line) for line in data]
@@ -121,8 +126,14 @@ class Validator:
 
         # The two sensors might not show exactly the same position, even when both are working correctly.
         # The program compares their readings to find the difference
-        offset_slice = [(reading.pot - reading.encoder) for reading in data if (reading.time <= self._calibration_time)]
-        offset = median(offset_slice)  # use the median instead of mean to minimize noise
+        offset_slice = []
+
+        for reading in data:
+            if reading.time <= self._calibration_time:
+                difference = reading.pot - reading.encoder
+                offset_slice.append(difference)
+
+        offset = median(offset_slice)
         self._logger.debug(f"offset = {offset: .4f}")
 
         for reading in data: reading.encoder += offset  # Adjust the encoder readings to match the shaft's actual position.
@@ -137,9 +148,12 @@ class Validator:
             the standard deviation of the disagreement between the readings
         """
         if self.data is None: raise TypeError("data is None")
-        disagreement_slice = [  # Calculate the difference between the two sensor readings by subtracting them
-            abs(reading.pot - reading.encoder) for reading in self.data if (reading.time <= self._calibration_time)
-        ]
+        disagreement_slice = []
+
+        for reading in self.data:
+            if reading.time <= self._calibration_time:
+                disagreement = abs(reading.pot - reading.encoder)
+                disagreement_slice.append(disagreement)
 
         self._mean = mean(disagreement_slice)
         self._std_dev = stdev(disagreement_slice)
